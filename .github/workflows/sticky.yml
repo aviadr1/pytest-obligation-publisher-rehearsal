@@ -1,0 +1,33 @@
+name: Application contracts sticky
+on:
+  workflow_run:
+    workflows: [Application contracts]
+    types: [completed]
+permissions: {}
+jobs:
+  publish:
+    if: ${{ github.event.workflow_run.event == 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      pull-requests: write
+    concurrency:
+      group: rehearsal-${{ github.event.workflow_run.head_repository.full_name }}-${{ github.event.workflow_run.head_branch }}
+      cancel-in-progress: false
+    steps:
+      - uses: gigaverse-app/pytest-obligation/publish@03273d99b1dec050aeeab8175ade23e8927d7c1a
+        id: publish
+        with:
+          sticky-key: rehearsal
+      - name: Require a real publication with honest provenance
+        env:
+          PUBLISHED: ${{ steps.publish.outputs.published }}
+          PR: ${{ steps.publish.outputs.pull-request }}
+          MARKDOWN: ${{ steps.publish.outputs.markdown-path }}
+          CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+        run: |
+          test "$PUBLISHED" = true
+          test -n "$PR"
+          grep -F "GitHub workflow: $CONCLUSION" "$MARKDOWN"
+          if grep -Eq 'Evidence unavailable|FORGED MARKDOWN|evil.invalid|blob/dddddddd' "$MARKDOWN"; then exit 1; fi

@@ -1,0 +1,48 @@
+name: Application contracts
+on: pull_request
+permissions:
+  contents: read
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9
+      - name: Run real generated contract tests
+        id: tests
+        run: uv run --no-project --with "pytest-obligation @ git+https://github.com/gigaverse-app/pytest-obligation.git@03273d99b1dec050aeeab8175ade23e8927d7c1a#subdirectory=package" pytest -q --due-work-profile-report=profiles.json --junitxml=junit.xml
+      - name: Stage and upload the report
+        id: report
+        if: always()
+        uses: gigaverse-app/pytest-obligation/report@03273d99b1dec050aeeab8175ade23e8927d7c1a
+        with:
+          report-path: profiles.json
+          expected-reports: '1'
+          sticky-key: rehearsal
+          post-comment: 'false'
+          graphics: 'false'
+          test-outcome: ${{ steps.tests.outcome }}
+      - name: Adversarial scenario, only when the fork asks for it
+        if: ${{ always() && steps.report.outcome == 'success' }}
+        env:
+          MARKDOWN: ${{ steps.report.outputs.markdown-path }}
+        run: |
+          if [[ ! -f tamper-evidence ]]; then exit 0; fi
+          echo "ADVERSARIAL_ARTIFACT=$(dirname "$MARKDOWN")/artifact" >> "$GITHUB_ENV"
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          root = Path(os.environ['MARKDOWN']).parent / 'artifact'
+          manifest = json.loads((root/'manifest.json').read_text())
+          manifest.update(test_outcome='success', revision='d'*40)
+          (root/'manifest.json').write_text(json.dumps(manifest))
+          (root/'report.md').write_text('FORGED MARKDOWN https://evil.invalid @everyone')
+          PY
+      - name: Replace the evidence upload in the adversarial scenario
+        if: ${{ always() && hashFiles('tamper-evidence') != '' && steps.report.outcome == 'success' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: obligation-rehearsal-${{ github.run_attempt }}
+          path: ${{ env.ADVERSARIAL_ARTIFACT }}
+          overwrite: true
